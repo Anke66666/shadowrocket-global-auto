@@ -1,0 +1,58 @@
+# NAME: Gemini 2026 Enhanced
+# FORMAT: Shadowrocket RULE-SET (.list)
+# UPDATED: 2026-10-16
+# SOURCES:
+# https://github.com/blackmatrix7/ios_rule_script/blob/master/rule/Shadowrocket/Gemini/Gemini.list
+# https://github.com/v2fly/domain-list-community/blob/master/data/google-deepmind
+# https://github.com/blackmatrix7/ios_rule_script/issues/1646
+# https://github.com/MetaCubeX/meta-rules-dat/issues/159
+# https://github.com/MetaCubeX/meta-rules-dat/issues/170
+# NOTES: No policy names in this file; select policy in your RULE-SET reference.
+# NOTES: Includes the upstream legacy rules, some of which also match non-Gemini Google services.
+
+# Original blackmatrix7 compatibility rules
+DOMAIN,ai.google.dev
+DOMAIN,alkalimakersuite-pa.clients6.google.com
+DOMAIN,makersuite.google.com
+DOMAIN-SUFFIX,bard.google.com
+DOMAIN-SUFFIX,deepmind.com
+DOMAIN-SUFFIX,deepmind.google
+DOMAIN-SUFFIX,gemini.google.com
+DOMAIN-SUFFIX,generativeai.google
+DOMAIN-SUFFIX,proactivebackend-pa.googleapis.com
+DOMAIN-SUFFIX,apis.google.com
+DOMAIN-KEYWORD,colab
+DOMAIN-KEYWORD,developerprofiles
+DOMAIN-KEYWORD,generativelanguage
+
+# Gemini website, app and related UI domains
+DOMAIN-SUFFIX,gemini.google
+DOMAIN-SUFFIX,gemini.gstatic.com
+DOMAIN,geminiweb-pa.clients.google.com
+DOMAIN,geminiweb-pa.clients6.google.com
+DOMAIN-SUFFIX,ai.studio
+DOMAIN-SUFFIX,aistudio.google.com
+
+# Google Generative Language API and Gemini frontend
+DOMAIN,generativelanguage.googleapis.com
+DOMAIN,geller-pa.googleapis.com
+DOMAIN,robinfrontend-pa.googleapis.com
+
+# Google AI Studio
+DOMAIN,alkalicore-pa.clients6.google.com
+DOMAIN,webchannel-alkalimakersuite-pa.clients6.google.com
+DOMAIN,alkalimakersuite-pa.googleapis.com
+
+# Gemini Code Assist / CLI / Android Studio
+DOMAIN,cloudaicompanion.googleapis.com
+DOMAIN,cloudcode-pa.googleapis.com
+DOMAIN,daily-cloudcode-pa.googleapis.com
+DOMAIN,aicode.googleapis.com
+DOMAIN,aida.googleapis.com
+
+# Google AI Labs endpoints included in earlier requested additions
+DOMAIN,aisandbox-pa.googleapis.com
+
+# Gemini 2026 Android / iOS community fixes
+DOMAIN,optimizationguide-pa.googleapis.com
+DOMAIN,webchannel-robinfrontend-pa.googleapis.com

@@ -1,5 +1,12 @@
 {
   "source": "https://raw.githubusercontent.com/Johnshall/Shadowrocket-ADBlock-Rules-Forever/release/lazy_group.conf",
   "sha256": "2b9a7e621301fcf4cf5ff572a6d00fda52186495c138577c6035c3b912279a86",
-  "license": "CC BY-SA 4.0"
+  "license": "CC BY-SA 4.0",
+  "gemini": {
+    "source": "https://raw.githubusercontent.com/Anke66666/gemini-shadowrocket-rules/main/Gemini_2026_Shadowrocket.list",
+    "sha256": "d214ffd731faa68bf53ca9d8b3b4eefe5d3d0e3db0445ba30861af87db43cf3d",
+    "rule_count": 33,
+    "snapshot": "upstream/Gemini_2026_Shadowrocket.list",
+    "policy": "AI"
+  }
 }

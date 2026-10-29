@@ -8,7 +8,9 @@
 * `🛟 故障回退` 提供单独可选的 `fallback` 策略组。
 * `✈️ 手动选择` 保留人工指定的选择口。
 * 国际默认规则指向全球自动优选，CN 的 GEOIP 仍然直连。
-* AI、流媒体和地区分组保留，AI 可以手动切换到允许的地区。
+* AI 和其他服务一样保留 `select` 分组，默认使用全球自动优选，可手动选择美国、日本、香港等地区；没有强制美国路由。
+* 合入你的 [Gemini 增强规则](https://github.com/Anke66666/gemini-shadowrocket-rules/blob/main/Gemini_2026_Shadowrocket.list)，通过校验后逐条写入配置的 `[Rule]` 开头，统一指向 `AI`。
+* 原有 AI 综合规则集继续保留，覆盖 ChatGPT、Claude、Copilot、Cursor、Grok、Perplexity 等服务；其他服务分组、国内直连和全球兜底策略保留。
 * 不存任何私人机场订阅、密钥或者账号。已有订阅需要在手机 Shadowrocket 中单独导入。
 
 ## 重要限制
@@ -16,21 +18,31 @@
 1. `url-test` 是延迟优选，低延迟不代表最大带宽。测试异步，不能承诺实时毫秒级故障切换；休眠后假连接也未必消失。
 2. `fallback` 策略组独立存在，不会凭空增强 `url-test`。如需 Shadowrocket 客户端的「启用回退」，必须在手机实际开启并验证；不同版本 UI 可能有差异。
 3. `policy-regex-filter` 依据节点备注动态筛选，可能误排除包含订阅提醒字眼的真实节点；客户端可见节点的范围及分组行为应在 iPhone 上检查。
-4. 配置文件不包含代理节点，也不提供私人代理订阅。AI 有地域限制，需要自己在「AI」策略组里指定可用地区。
+4. 配置只筛选手机里已经导入且当前可见的节点，不会发现全世界的节点。AI 有地域限制，需要自己在 `AI` 策略组里指定可用地区。地区组按节点备注匹配，名称要匹配已有订阅里的实际节点；备注含“美国”也不证明真实出口位于美国。
 5. 保持上游 DNS、MITM 等配置段原状。导入不代表需要在 iOS 安装 HTTPS 解密证书；默认不要启用 HTTPS 解密。
 6. GitHub Actions 拉取上游时校验基本配置结构并生成，校验失败不会发布新文件；客户端兼容性仍需要真实设备测试。
+7. Gemini 原规则中的 `apis.google.com`、`DOMAIN-KEYWORD,colab`、`developerprofiles` 等会匹配部分非 Gemini 流量。原 AI 综合规则集还包含整个 `googleapis.com`、`www.bing.com` 和部分 Apple 共用服务。选择 AI 策略时，这些匹配的共用服务也会跟随；本次保持这些既有规则范围，没有扩大成整个 `google.com`。
+8. 本地测试只验证配置结构、规则顺序、节点名称匹配样例和同步失败保护。没有使用真实节点测速，没有在 iPhone 上验证故障切换、真实美国出口或 AI 服务解锁。启用的模块规则、旧连接和客户端保存的策略选择也可能影响实际结果。
 
-## 在 GitHub 启用
+## 配置链接
 
-目标仓库：`Anke66666/shadowrocket-global-auto`，建议创建 `public` 空仓库，然后将本项目**解压后的全部文件和目录**提交到 `main`，不是上传 ZIP 压缩包本身。
-
-将 GitHub Actions 设置为允许运行；如需要，授予 workflow `Read and write permissions`。打开 Actions > `Safe upstream sync` > `Run workflow`。首次执行成功后检查 `global-auto.conf` 是否刷新，以及 `UPSTREAM.json` 的 SHA。
-
-**稳定配置链接**（仅在仓库存在、完成提交并验证能访问后有效）：
+仓库：[Anke66666/shadowrocket-global-auto](https://github.com/Anke66666/shadowrocket-global-auto)。完整配置固定使用以下 Raw 链接，节点订阅仍保存在手机中：
 
 `https://raw.githubusercontent.com/Anke66666/shadowrocket-global-auto/main/global-auto.conf`
 
 使用 GitHub Pages 需要另行在 GitHub Settings > Pages 中启用，单靠提交文件不会自动获得 Pages 地址。
+
+## 自动同步与来源记录
+
+GitHub Actions 的 `Safe upstream sync` 每天北京时间 10:00 检查 Johnshall 完整配置和你的 Gemini 规则，也支持手动运行；GitHub 调度可能延迟。修改生成脚本、测试、配置、来源记录或规则快照也会触发检查。
+
+两份来源全部下载、校验并完成生成后，工作流再次运行测试，通过后才提交 `global-auto.conf`、`UPSTREAM.json` 和 `upstream/Gemini_2026_Shadowrocket.list`。下载失败、结构异常、规则缺少核心域名或测试失败时，仓库中上次发布的版本保持原样。没有变化时不产生新提交。
+
+`UPSTREAM.json` 记录两个来源 URL、SHA256 及 Gemini 有效规则数。`upstream/Gemini_2026_Shadowrocket.list` 保存当前已验证的原始 Gemini 规则，内容不含策略；生成时添加 `AI` 策略，且放在通用 Google、Microsoft、国内和 FINAL 规则之前。允许的来源规则类型为 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`，其他类型或内嵌策略会停止同步，等待人工审查。
+
+手机下载的是已经合并完成的完整配置，不会直接加载未经检查的新版 Gemini 远程规则。GitHub 更新后，手机仍需更新该配置；GitHub Actions 不会主动把新配置推到手机。原有其他远程 `RULE-SET` 继续由 Shadowrocket 加载，本流程没有逐一审查它们的后续内容。
+
+`tests/fixture_upstream.conf` 保留原 Johnshall 配置测试快照；历史正式版本保存在 Git 提交记录中。原 Gemini 仓库保持原样。两个来源的署名及规则来源链接均保留。
 
 ## 本地检查
 
@@ -39,8 +51,16 @@ python -m unittest discover -s tests -v
 python scripts/build.py
 ```
 
-`python scripts/build.py` 从上游拉取当前配置，校验后覆盖 `global-auto.conf`。上游发生重大结构变化时会拒绝更新，不影响仓库里上次发布的文件。
+`python scripts/build.py` 同时拉取两个来源，全部校验完成后生成文件。离线复现可使用：
+
+```bash
+python scripts/build.py --source tests/fixture_upstream.conf --gemini-source upstream/Gemini_2026_Shadowrocket.list
+```
+
+测试包括逐条合入 Gemini 规则、规则优先顺序、常见 Gemini 域名匹配、AI 可选地区、全球策略保留、错误规则拒绝、来源失败保留旧文件、快照与 SHA 一致，以及离线重复生成。它们不模拟 Shadowrocket 的网络连接或故障切换。
 
 ## 在 iPhone 使用
 
-在 Shadowrocket 中先保留现有配置，导入上述已验证的配置 URL；在「配置」模式使用。检查 `♻️ 全球自动优选` 是否包含你已有订阅的节点，并查看是否能自动测速。需要指定地区的 AI 服务，可单独在 `AI` 组改选 `美国节点`。真实设备功能未经过本仓库生成脚本验证。
+先保留现有配置和节点订阅，更新或导入上述完整配置 URL，并在「配置」路由模式使用。AI 组默认和其他服务一样使用全球自动优选；你可以自行在 `AI` 组选择 `美国节点`。导入后如客户端保留了旧的策略选择，以手机当前显示为准。
+
+美国组中应显示你订阅里实际存在的美国节点，再通过请求记录确认 Gemini 匹配 `AI` 并检查真实出口。没有匹配的美国节点时，该地区组没有可用候选；配置不会创建节点。全局测速与故障回退的实际表现仍需在手机检查。

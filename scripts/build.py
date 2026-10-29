@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a Shadowrocket config from Johnshall lazy_group.conf, preserving upstream rules."""
+"""Merge Johnshall config and validated Gemini rules; retain selectable policies."""
 import argparse
 import hashlib
 import json
@@ -8,6 +8,16 @@ import re
 import urllib.request
 
 UPSTREAM = 'https://raw.githubusercontent.com/Johnshall/Shadowrocket-ADBlock-Rules-Forever/release/lazy_group.conf'
+GEMINI_UPSTREAM = 'https://raw.githubusercontent.com/Anke66666/gemini-shadowrocket-rules/main/Gemini_2026_Shadowrocket.list'
+GEMINI_SNAPSHOT = pathlib.Path(__file__).resolve().parents[1] / 'upstream' / 'Gemini_2026_Shadowrocket.list'
+GEMINI_BEGIN = '# BEGIN validated Gemini rules'
+GEMINI_END = '# END validated Gemini rules'
+GEMINI_REQUIRED = {
+    'DOMAIN-SUFFIX,gemini.google.com',
+    'DOMAIN-SUFFIX,aistudio.google.com',
+    'DOMAIN,generativelanguage.googleapis.com',
+    'DOMAIN,cloudaicompanion.googleapis.com',
+}
 TEST_URL = 'http://www.gstatic.com/generate_204'
 BEST = '♻️ 全球自动优选'
 FAILOVER = '🛟 故障回退'
@@ -27,6 +37,30 @@ HEADERS = re.compile(r'^\[([^\]\n]+)\]\s*$', re.M)
 
 class ConfigError(ValueError):
     pass
+
+def gemini_rules(doc):
+    """Accept only policy-free domain rules, never remote policies or directives."""
+    rules = []
+    for number, line in enumerate(doc.splitlines(), 1):
+        item = line.strip()
+        if not item or item.startswith(('#', ';')):
+            continue
+        fields = [part.strip() for part in item.split(',')]
+        if len(fields) != 2 or fields[0] not in ('DOMAIN', 'DOMAIN-SUFFIX', 'DOMAIN-KEYWORD'):
+            raise ConfigError(f'Unexpected Gemini rule at line {number}')
+        kind, value = fields
+        if kind == 'DOMAIN-KEYWORD':
+            valid = re.fullmatch(r'[a-z0-9][a-z0-9.-]*', value)
+        else:
+            valid = re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}', value)
+        if not valid:
+            raise ConfigError(f'Invalid Gemini domain at line {number}')
+        rule = ','.join(fields)
+        if rule not in rules:
+            rules.append(rule)
+    if len(rules) < 20 or not GEMINI_REQUIRED.issubset(rules):
+        raise ConfigError('Gemini rules unexpectedly shortened or missing core endpoints')
+    return rules
 
 def split_sections(doc):
     matches = list(HEADERS.finditer(doc))
@@ -69,7 +103,10 @@ def validate_source(doc):
         raise ConfigError('Upstream FINAL changed')
     return head, sections
 
-def build(source):
+def build(source, gemini_source=None):
+    if gemini_source is None:
+        gemini_source = GEMINI_SNAPSHOT.read_text(encoding='utf-8')
+    enhanced_rules = gemini_rules(gemini_source)
     _, sections = validate_source(source)
     original_groups = sections['Proxy Group']
     original_names = set(group_names(original_groups))
@@ -120,11 +157,20 @@ def build(source):
         elif policy.lower() in lookup:
             fields[p]=lookup[policy.lower()]
         updated_rules.append(','.join(fields))
-    sections['Rule']='\n'.join(updated_rules)+'\n\n'
+    # Inline the checked snapshot ahead of general Google/Microsoft/global rules.
+    # A later upstream edit cannot bypass validation on the phone via a live RULE-SET.
+    gemini_block = [GEMINI_BEGIN, '# Source: '+GEMINI_UPSTREAM,
+                    '# Shared Google endpoints in the source also follow AI.',
+                    *(rule+',AI' for rule in enhanced_rules), GEMINI_END]
+    sections['Rule']='\n'+'\n'.join(gemini_block+updated_rules)+'\n\n'
     sha=hashlib.sha256(source.encode('utf-8')).hexdigest()
+    gemini_sha=hashlib.sha256(gemini_source.encode('utf-8')).hexdigest()
     intro=(f'# Shadowrocket Global Auto | Upstream SHA256: {sha}\n'
            '# Source: https://github.com/Johnshall/Shadowrocket-ADBlock-Rules-Forever\n'
            '# CC BY-SA 4.0. Derived work. No private subscription or credentials.\n'
+           f'# Gemini source: {GEMINI_UPSTREAM}\n'
+           f'# Gemini SHA256: {gemini_sha}\n'
+           '# AI is selectable like other services; choose a region in the client.\n'
            '# Latency measurement and failover timing depend on iOS/Shadowrocket.\n\n')
     output=intro+''.join(f'[{name}]'+text for name,text in sections.items())
     validate_output(output)
@@ -146,6 +192,36 @@ def validate_output(doc):
     if not re.search('^'+re.escape(FAILOVER)+r'\s*=\s*fallback,',sections['Proxy Group'],re.M):
         raise ConfigError('Fallback missing')
     rule_text=sections['Rule']
+    if rule_text.count(GEMINI_BEGIN) != 1 or rule_text.count(GEMINI_END) != 1:
+        raise ConfigError('Missing or duplicate Gemini block')
+    before, block = rule_text.split(GEMINI_BEGIN, 1)
+    if any(line.strip() and not line.lstrip().startswith(('#', ';'))
+           for line in before.splitlines()):
+        raise ConfigError('Gemini block must precede upstream rules')
+    block, _ = block.split(GEMINI_END, 1)
+    normalized = []
+    for line in block.splitlines():
+        item = line.strip()
+        if not item or item.startswith(('#', ';')):
+            continue
+        fields = item.split(',')
+        if len(fields) != 3 or fields[-1] != 'AI':
+            raise ConfigError('Gemini rule must use AI policy')
+        normalized.append(','.join(fields[:2]))
+    gemini_rules('\n'.join(normalized))
+    definitions = dict(line.split('=', 1) for line in sections['Proxy Group'].splitlines()
+                       if line.strip() and not line.lstrip().startswith(('#', ';')))
+    definitions = {name.strip(): value.strip() for name, value in definitions.items()}
+    ai_fields = [part.strip() for part in definitions['AI'].split(',')]
+    ai_members = [part for part in ai_fields[1:] if '=' not in part]
+    if (ai_fields[0] != 'select' or not ai_members or ai_members[0] != BEST
+            or '美国节点' not in ai_members or '日本节点' not in ai_members):
+        raise ConfigError('AI must retain global default and selectable regions')
+    for name, value in definitions.items():
+        for member in value.split(',')[1:]:
+            member = member.strip()
+            if '=' not in member and member not in set(groups) | RESERVED:
+                raise ConfigError(f'Unknown group member {member!r} in {name}')
     if 'FINAL,'+BEST not in rule_text:
         raise ConfigError('FINAL is not automatic')
     if re.search(r'^FINAL,PROXY\s*$',rule_text,re.M):
@@ -168,29 +244,49 @@ def validate_output(doc):
             raise ConfigError('Unknown policy '+repr(policy)+' in '+item[:120])
     return True
 
+def fetch_text(url):
+    req=urllib.request.Request(url,headers={'User-Agent':'shadowrocket-global-auto-sync/1.1'})
+    with urllib.request.urlopen(req,timeout=30) as response:
+        if response.status!=200:
+            raise ConfigError('Upstream HTTP status not 200')
+        data=response.read(1024*1024+1)
+        if len(data)>1024*1024:
+            raise ConfigError('Upstream oversized')
+        return data.decode('utf-8-sig')
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--source',help='Optional local upstream file, for tests')
+    ap.add_argument('--gemini-source',help='Optional local Gemini rules, for offline builds')
+    ap.add_argument('--gemini-snapshot',default=str(GEMINI_SNAPSHOT))
     ap.add_argument('--output',default='global-auto.conf')
     ap.add_argument('--lock',default='UPSTREAM.json')
     args=ap.parse_args()
     if args.source:
         source=pathlib.Path(args.source).read_text('utf-8')
     else:
-        req=urllib.request.Request(UPSTREAM,headers={'User-Agent':'shadowrocket-global-auto-sync/1.0'})
-        with urllib.request.urlopen(req,timeout=30) as response:
-            if response.status!=200:
-                raise ConfigError('Upstream HTTP status not 200')
-            data=response.read(1024*1024+1)
-            if len(data)>1024*1024:
-                raise ConfigError('Upstream oversized')
-            source=data.decode('utf-8-sig')
-    output,sha=build(source)
-    pathlib.Path(args.output).write_text(output,encoding='utf-8')
-    pathlib.Path(args.lock).write_text(json.dumps({
-        'source':UPSTREAM,'sha256':sha,'license':'CC BY-SA 4.0'
-    },ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+        source=fetch_text(UPSTREAM)
+    gemini_source=(pathlib.Path(args.gemini_source).read_text(encoding='utf-8')
+                   if args.gemini_source else fetch_text(GEMINI_UPSTREAM))
+    # Fetch and validate both inputs before touching any published output.
+    output,sha=build(source, gemini_source)
+    lock=json.dumps({
+        'source':UPSTREAM,'sha256':sha,'license':'CC BY-SA 4.0',
+        'gemini': {
+            'source':GEMINI_UPSTREAM,
+            'sha256':hashlib.sha256(gemini_source.encode('utf-8')).hexdigest(),
+            'rule_count':len(gemini_rules(gemini_source)),
+            'snapshot':'upstream/Gemini_2026_Shadowrocket.list',
+            'policy':'AI',
+        },
+    },ensure_ascii=False,indent=2)+'\n'
+    snapshot=pathlib.Path(args.gemini_snapshot)
+    snapshot.parent.mkdir(parents=True,exist_ok=True)
+    snapshot.write_text(gemini_source,encoding='utf-8',newline='\n')
+    pathlib.Path(args.output).write_text(output,encoding='utf-8',newline='\n')
+    pathlib.Path(args.lock).write_text(lock,encoding='utf-8',newline='\n')
     print('Output validated:',args.output,sha)
 
 if __name__=='__main__':
     main()
+

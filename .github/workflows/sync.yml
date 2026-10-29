@@ -10,6 +10,9 @@ on:
       - 'scripts/**'
       - 'tests/**'
       - '.github/workflows/**'
+      - 'upstream/**'
+      - 'global-auto.conf'
+      - 'UPSTREAM.json'
 
 permissions:
   contents: write
@@ -33,19 +36,16 @@ jobs:
           python-version: '3.12'
       - name: Run offline tests
         run: python -m unittest discover -s tests -v
-      - name: Fetch, transform, and validate upstream
+      - name: Fetch and validate Johnshall config and Gemini rules
         run: python scripts/build.py
-      - name: Validate generated config again
-        run: python -c 'from scripts.build import validate_output; from pathlib import Path; validate_output(Path("global-auto.conf").read_text(encoding="utf-8"))'
+      - name: Test generated config and Gemini snapshot
+        run: python -m unittest discover -s tests -v
       - name: Commit changes only when all validation succeeds
         run: |
-          if git diff --quiet -- global-auto.conf UPSTREAM.json && git ls-files --error-unmatch UPSTREAM.json >/dev/null 2>&1; then
-            echo "Up to date"
-            exit 0
-          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add global-auto.conf UPSTREAM.json
+          git add global-auto.conf UPSTREAM.json upstream/Gemini_2026_Shadowrocket.list
           git diff --cached --quiet && exit 0
-          git commit -m 'chore: sync validated upstream Shadowrocket configuration'
+          git commit -m 'chore: sync validated Shadowrocket config and Gemini rules'
           git push
+
