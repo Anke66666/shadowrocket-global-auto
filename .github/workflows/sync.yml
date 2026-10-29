@@ -1,0 +1,51 @@
+name: Safe upstream sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *' # 10:00 Beijing, possible GitHub scheduling delays
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: global-auto-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run offline tests
+        run: python -m unittest discover -s tests -v
+      - name: Fetch, transform, and validate upstream
+        run: python scripts/build.py
+      - name: Validate generated config again
+        run: python -c 'from scripts.build import validate_output; from pathlib import Path; validate_output(Path("global-auto.conf").read_text(encoding="utf-8"))'
+      - name: Commit changes only when all validation succeeds
+        run: |
+          if git diff --quiet -- global-auto.conf UPSTREAM.json && git ls-files --error-unmatch UPSTREAM.json >/dev/null 2>&1; then
+            echo "Up to date"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add global-auto.conf UPSTREAM.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'chore: sync validated upstream Shadowrocket configuration'
+          git push
