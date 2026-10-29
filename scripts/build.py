@@ -18,8 +18,10 @@ GEMINI_REQUIRED = {
 }
 TEST_URL = 'http://www.gstatic.com/generate_204'
 BEST = '♻️ 全球自动优选'
+SELECTOR = '🚀 节点选择'
 FAILOVER = '🛟 故障回退'
 MANUAL = '✈️ 手动选择'
+REGIONS = ('香港节点','台湾节点','新加坡节点','日本节点','美国节点','韩国节点')
 FILTER = r'^(?!.*(?i:剩余|剩餘|流量|套餐|到期|过期|過期|充值|续费|續費|订阅|訂閱|官网|官網|公告|客服|工单|工單|重置|流量信息|traffic remaining|traffic used|subscription info|expire date|expiry date|website|official website)).+$'
 CASE_NAMES = {
  'youtube':'YouTube','netflix':'Netflix','disney+':'Disney+','max':'Max',
@@ -90,7 +92,7 @@ def validate_source(doc):
         if name not in sections:
             raise ConfigError(f'Upstream missing {name}')
     names = group_names(sections['Proxy Group'])
-    for name in ('AI','Telegram','YouTube','香港节点','日本节点','美国节点'):
+    for name in ('AI','Telegram','YouTube',*REGIONS):
         if name not in names:
             raise ConfigError(f'Upstream renamed group: {name}')
     active_rules = [x for x in sections['Rule'].splitlines()
@@ -106,11 +108,12 @@ def build(source, gemini_source):
     _, sections = validate_source(source)
     original_groups = sections['Proxy Group']
     original_names = set(group_names(original_groups))
-    for name in (BEST,FAILOVER,MANUAL):
+    for name in (SELECTOR,BEST,FAILOVER,MANUAL):
         if name in original_names:
             raise ConfigError('New policy collides with upstream: '+name)
     lines = [
       '# Global all-region auto-selection, using only nodes currently visible to the client.',
+      f'{SELECTOR} = select,'+','.join((BEST,*REGIONS,FAILOVER,MANUAL))+f',select=0,policy-select-name={BEST}',
       f'{BEST} = url-test,policy-regex-filter={FILTER},url={TEST_URL},interval=300,timeout=5,tolerance=80',
       f'{FAILOVER} = fallback,policy-regex-filter={FILTER},url={TEST_URL},interval=300,timeout=5',
       f'{MANUAL} = select,{BEST},{FAILOVER},policy-regex-filter={FILTER},select=0',
@@ -124,8 +127,8 @@ def build(source, gemini_source):
         name, value = line.split('=',1)
         if value.strip().startswith('select,'):
             fields = [f.strip() for f in value.strip().split(',')]
-            fields = [BEST if f=='PROXY' else
-                      ('policy-select-name='+BEST if f=='policy-select-name=PROXY' else f)
+            fields = [SELECTOR if f=='PROXY' else
+                      ('policy-select-name='+SELECTOR if f=='policy-select-name=PROXY' else f)
                       for f in fields]
             lines.append(name.rstrip()+' = '+','.join(fields))
         else:
@@ -149,7 +152,7 @@ def build(source, gemini_source):
             continue
         policy=fields[p].strip()
         if policy=='PROXY':
-            fields[p]=BEST
+            fields[p]=SELECTOR
         elif policy.lower() in lookup:
             fields[p]=lookup[policy.lower()]
         updated_rules.append(','.join(fields))
@@ -163,7 +166,7 @@ def build(source, gemini_source):
            '# CC BY-SA 4.0. Derived work. No private subscription or credentials.\n'
            f'# Gemini source: {GEMINI_UPSTREAM}\n'
            f'# Gemini SHA256 at build: {gemini_sha}\n'
-           '# AI is selectable like other services; choose a region in the client.\n'
+           '# Default proxy traffic follows the node selector; services can override it.\n'
            '# Latency measurement and failover timing depend on iOS/Shadowrocket.\n\n')
     output=intro+''.join(f'[{name}]'+text for name,text in sections.items())
     validate_output(output)
@@ -177,7 +180,7 @@ def validate_output(doc):
     groups=group_names(sections['Proxy Group'])
     if len(groups)!=len(set(groups)):
         raise ConfigError('Duplicate group names')
-    for required in (BEST,FAILOVER,MANUAL,'AI','Telegram','YouTube'):
+    for required in (SELECTOR,BEST,FAILOVER,MANUAL,'AI','Telegram','YouTube',*REGIONS):
         if required not in groups:
             raise ConfigError('Missing group '+required)
     if not re.search('^'+re.escape(BEST)+r'\s*=\s*url-test,',sections['Proxy Group'],re.M):
@@ -196,18 +199,46 @@ def validate_output(doc):
     definitions = dict(line.split('=', 1) for line in sections['Proxy Group'].splitlines()
                        if line.strip() and not line.lstrip().startswith(('#', ';')))
     definitions = {name.strip(): value.strip() for name, value in definitions.items()}
+    selector_fields = [part.strip() for part in definitions[SELECTOR].split(',')]
+    selector_members = [part for part in selector_fields[1:] if '=' not in part]
+    if (selector_fields[0] != 'select'
+            or selector_members != [BEST,*REGIONS,FAILOVER,MANUAL]
+            or 'select=0' not in selector_fields
+            or 'policy-select-name='+BEST not in selector_fields):
+        raise ConfigError('Node selector must default to global and offer all regional groups')
+    for region in REGIONS:
+        if not definitions[region].startswith('url-test,'):
+            raise ConfigError('Region must use automatic latency selection: '+region)
     ai_fields = [part.strip() for part in definitions['AI'].split(',')]
     ai_members = [part for part in ai_fields[1:] if '=' not in part]
-    if (ai_fields[0] != 'select' or not ai_members or ai_members[0] != BEST
-            or '美国节点' not in ai_members or '日本节点' not in ai_members):
-        raise ConfigError('AI must retain global default and selectable regions')
+    if (ai_fields[0] != 'select' or not ai_members or ai_members[0] != SELECTOR
+            or '美国节点' not in ai_members or '日本节点' not in ai_members
+            or 'policy-select-name='+SELECTOR not in ai_fields):
+        raise ConfigError('AI must follow node selector by default and retain region overrides')
+    graph = {}
     for name, value in definitions.items():
+        graph[name] = []
         for member in value.split(',')[1:]:
             member = member.strip()
             if '=' not in member and member not in set(groups) | RESERVED:
                 raise ConfigError(f'Unknown group member {member!r} in {name}')
-    if 'FINAL,'+BEST not in rule_text:
-        raise ConfigError('FINAL is not automatic')
+            if member in definitions:
+                graph[name].append(member)
+    visited, visiting = set(), set()
+    def check_cycle(name):
+        if name in visiting:
+            raise ConfigError('Cyclic policy group: '+name)
+        if name in visited:
+            return
+        visiting.add(name)
+        for child in graph[name]:
+            check_cycle(child)
+        visiting.remove(name)
+        visited.add(name)
+    for name in definitions:
+        check_cycle(name)
+    if 'FINAL,'+SELECTOR not in active_rules:
+        raise ConfigError('FINAL must follow node selector')
     if re.search(r'^FINAL,PROXY\s*$',rule_text,re.M):
         raise ConfigError('Unchanged fallback rule')
     if 'GEOIP,CN,DIRECT' not in rule_text:

@@ -32,9 +32,9 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(build.validate_output(config))
         self.assertIn(f'{build.BEST} = url-test,',config)
         self.assertIn(f'{build.FAILOVER} = fallback,',config)
-        self.assertIn(f'FINAL,{build.BEST}',config)
+        self.assertIn(f'FINAL,{build.SELECTOR}',config)
         self.assertIn('GEOIP,CN,DIRECT',config)
-        self.assertIn('AI = select,♻️ 全球自动优选',config)
+        self.assertIn('AI = select,'+build.SELECTOR,config)
         ai_line=next(line for line in config.splitlines() if line.startswith('AI ='))
         for region in ('香港节点','日本节点','美国节点'):
             self.assertIn(region,ai_line)
@@ -52,7 +52,7 @@ class ConfigTests(unittest.TestCase):
         actual=(ROOT/'global-auto.conf').read_text(encoding='utf-8')
         self.assertTrue(build.validate_output(actual))
         self.assertIn('\n'+build.GEMINI_RULE+'\n',actual)
-        self.assertIn(f'FINAL,{build.BEST}',actual)
+        self.assertIn(f'FINAL,{build.SELECTOR}',actual)
         _,sections=build.split_sections(actual)
         active=lambda text: [line.strip() for line in text.splitlines()
                              if line.strip() and not line.lstrip().startswith(('#',';'))]
@@ -105,9 +105,67 @@ class ConfigTests(unittest.TestCase):
 
     def test_rejects_forced_us_default_or_unknown_group_member(self):
         config,_=build.build(self.source,self.gemini)
-        for bad in (config.replace('AI = select,♻️ 全球自动优选','AI = select,美国节点'),
-                    config.replace('AI = select,♻️ 全球自动优选',
-                                   'AI = select,♻️ 全球自动优选,missing-region')):
+        for bad in (config.replace('AI = select,'+build.SELECTOR,'AI = select,美国节点'),
+                    config.replace('AI = select,'+build.SELECTOR,
+                                   'AI = select,'+build.SELECTOR+',missing-region')):
+            with self.assertRaises(build.ConfigError):
+                build.validate_output(bad)
+
+    def test_node_selector_is_first_and_defaults_to_global(self):
+        config,_=build.build(self.source,self.gemini)
+        _,sections=build.split_sections(config)
+        active=[line for line in sections['Proxy Group'].splitlines()
+                if line.strip() and not line.lstrip().startswith('#')]
+        self.assertTrue(active[0].startswith(build.SELECTOR+' = select,'+build.BEST+','))
+        fields=active[0].split('=',1)[1].strip().split(',')
+        self.assertIn('policy-select-name='+build.BEST,fields)
+        self.assertIn('select=0',fields)
+        for option in (build.BEST,*build.REGIONS,build.FAILOVER,build.MANUAL):
+            self.assertIn(option,fields)
+        self.assertNotIn('DIRECT',fields)
+
+    def test_regional_choices_preserve_native_automatic_groups(self):
+        config,_=build.build(self.source,self.gemini)
+        _,original=build.split_sections(self.source)
+        _,generated=build.split_sections(config)
+        def definitions(text):
+            return dict((line.split('=',1)[0].strip(),line.split('=',1)[1].strip())
+                        for line in text.splitlines() if line.strip() and not line.lstrip().startswith('#'))
+        old=definitions(original['Proxy Group'])
+        new=definitions(generated['Proxy Group'])
+        samples={'香港节点':'🇭🇰 香港 01','台湾节点':'🇹🇼 台湾 01',
+                 '日本节点':'🇯🇵 日本 01','新加坡节点':'🇸🇬 新加坡 01',
+                 '美国节点':'🇺🇸 美国 01','韩国节点':'🇰🇷 韩国 01'}
+        for region,sample in samples.items():
+            self.assertEqual(old[region],new[region])
+            self.assertTrue(new[region].startswith('url-test,'))
+            options=dict(part.split('=',1) for part in new[region].split(',')[1:] if '=' in part)
+            rx=re.compile(options['policy-regex-filter'])
+            self.assertIsNotNone(rx.search(sample),region)
+            self.assertIsNone(rx.search('DE Frankfurt 01'),region)
+
+    def test_general_routes_and_service_defaults_follow_selector(self):
+        config,_=build.build(self.source,self.gemini)
+        _,sections=build.split_sections(config)
+        for service in ('AI','YouTube','Netflix','Telegram','谷歌服务'):
+            line=next(line for line in sections['Proxy Group'].splitlines()
+                      if line.startswith(service+' ='))
+            self.assertIn('select,'+build.SELECTOR+',',line)
+            self.assertIn('policy-select-name='+build.SELECTOR,line)
+        self.assertIn('GitHub/GitHub.list,'+build.SELECTOR,sections['Rule'])
+        self.assertIn('Global/Global.list,'+build.SELECTOR,sections['Rule'])
+        self.assertIn('GEOIP,CN,DIRECT',sections['Rule'])
+        self.assertIn('FINAL,'+build.SELECTOR,sections['Rule'])
+        self.assertIn('苹果服务 = select,DIRECT,',sections['Proxy Group'])
+        self.assertIn(build.GEMINI_RULE,sections['Rule'])
+
+    def test_rejects_broken_selector_region_type_and_group_cycles(self):
+        config,_=build.build(self.source,self.gemini)
+        for bad in (config.replace(build.BEST+',香港节点',build.BEST),
+                    config.replace('美国节点 = url-test,','美国节点 = select,'),
+                    config.replace(build.MANUAL+' = select,'+build.BEST,
+                                   build.MANUAL+' = select,'+build.SELECTOR),
+                    config.replace('FINAL,'+build.SELECTOR,'FINAL,'+build.BEST)):
             with self.assertRaises(build.ConfigError):
                 build.validate_output(bad)
 
