@@ -10,7 +10,6 @@ on:
       - 'scripts/**'
       - 'tests/**'
       - '.github/workflows/**'
-      - 'upstream/**'
       - 'global-auto.conf'
       - 'UPSTREAM.json'
 
@@ -38,13 +37,13 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Fetch and validate Johnshall config and Gemini rules
         run: python scripts/build.py
-      - name: Test generated config and Gemini snapshot
+      - name: Test generated config and Gemini reference
         run: python -m unittest discover -s tests -v
       - name: Commit changes only when all validation succeeds
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add global-auto.conf UPSTREAM.json upstream/Gemini_2026_Shadowrocket.list
+          git add global-auto.conf UPSTREAM.json
           git diff --cached --quiet && exit 0
           git commit -m 'chore: sync validated Shadowrocket config and Gemini rules'
           git push

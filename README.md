@@ -9,7 +9,7 @@
 * `✈️ 手动选择` 保留人工指定的选择口。
 * 国际默认规则指向全球自动优选，CN 的 GEOIP 仍然直连。
 * AI 和其他服务一样保留 `select` 分组，默认使用全球自动优选，可手动选择美国、日本、香港等地区；没有强制美国路由。
-* 合入你的 [Gemini 增强规则](https://github.com/Anke66666/gemini-shadowrocket-rules/blob/main/Gemini_2026_Shadowrocket.list)，通过校验后逐条写入配置的 `[Rule]` 开头，统一指向 `AI`。
+* 在 `[Rule]` 开头直接引用你原来的 [Gemini 增强规则 `.list`](https://github.com/Anke66666/gemini-shadowrocket-rules/blob/main/Gemini_2026_Shadowrocket.list)，策略设为 `AI`。和其他服务规则集保持相同用法，不展开域名，也不另存一份 Gemini 规则文件。
 * 原有 AI 综合规则集继续保留，覆盖 ChatGPT、Claude、Copilot、Cursor、Grok、Perplexity 等服务；其他服务分组、国内直连和全球兜底策略保留。
 * 不存任何私人机场订阅、密钥或者账号。已有订阅需要在手机 Shadowrocket 中单独导入。
 
@@ -34,13 +34,19 @@
 
 ## 自动同步与来源记录
 
-GitHub Actions 的 `Safe upstream sync` 每天北京时间 10:00 检查 Johnshall 完整配置和你的 Gemini 规则，也支持手动运行；GitHub 调度可能延迟。修改生成脚本、测试、配置、来源记录或规则快照也会触发检查。
+GitHub Actions 的 `Safe upstream sync` 每天北京时间 10:00 检查 Johnshall 完整配置和你的 Gemini 规则，也支持手动运行；GitHub 调度可能延迟。修改生成脚本、测试、配置或来源记录也会触发检查。
 
-两份来源全部下载、校验并完成生成后，工作流再次运行测试，通过后才提交 `global-auto.conf`、`UPSTREAM.json` 和 `upstream/Gemini_2026_Shadowrocket.list`。下载失败、结构异常、规则缺少核心域名或测试失败时，仓库中上次发布的版本保持原样。没有变化时不产生新提交。
+两份来源全部下载、校验并完成生成后，工作流再次运行测试，通过后才提交 `global-auto.conf` 和 `UPSTREAM.json`。下载失败、结构异常、规则缺少核心域名或测试失败时，本仓库中上次发布的版本保持原样。没有变化时不产生新提交。
 
-`UPSTREAM.json` 记录两个来源 URL、SHA256 及 Gemini 有效规则数。`upstream/Gemini_2026_Shadowrocket.list` 保存当前已验证的原始 Gemini 规则，内容不含策略；生成时添加 `AI` 策略，且放在通用 Google、Microsoft、国内和 FINAL 规则之前。允许的来源规则类型为 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`，其他类型或内嵌策略会停止同步，等待人工审查。
+完整配置使用这一条引用，位置在通用 Google、Microsoft、国内和 FINAL 规则之前：
 
-手机下载的是已经合并完成的完整配置，不会直接加载未经检查的新版 Gemini 远程规则。GitHub 更新后，手机仍需更新该配置；GitHub Actions 不会主动把新配置推到手机。原有其他远程 `RULE-SET` 继续由 Shadowrocket 加载，本流程没有逐一审查它们的后续内容。
+```ini
+RULE-SET,https://raw.githubusercontent.com/Anke66666/gemini-shadowrocket-rules/main/Gemini_2026_Shadowrocket.list,AI
+```
+
+`UPSTREAM.json` 仅记录构建时检查到的两个来源 URL、SHA256 及 Gemini 有效规则数，不保存额外的 Gemini 规则副本。生成器校验 `.list` 中的 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`，其他类型或内嵌策略会停止本仓库的自动发布，等待人工审查。
+
+Shadowrocket 直接下载、缓存和刷新原 Gemini `.list`，其内容更新不必等待本仓库生成新配置。构建记录中的 SHA 只代表构建时读取的内容，不会锁定手机之后下载的版本；本仓库 CI 的校验也不会拦截原 Gemini 仓库之后的更新。完整配置本身有变动时，手机仍需更新配置。其他远程 `RULE-SET` 保持原状。
 
 `tests/fixture_upstream.conf` 保留原 Johnshall 配置测试快照；历史正式版本保存在 Git 提交记录中。原 Gemini 仓库保持原样。两个来源的署名及规则来源链接均保留。
 
@@ -51,13 +57,9 @@ python -m unittest discover -s tests -v
 python scripts/build.py
 ```
 
-`python scripts/build.py` 同时拉取两个来源，全部校验完成后生成文件。离线复现可使用：
+`python scripts/build.py` 同时拉取两个来源，全部校验完成后生成文件。离线构建可以分别通过 `--source` 和 `--gemini-source` 指定本地输入文件；仓库的离线测试使用测试代码中的模拟规则，不依赖额外的 Gemini 规则文件。
 
-```bash
-python scripts/build.py --source tests/fixture_upstream.conf --gemini-source upstream/Gemini_2026_Shadowrocket.list
-```
-
-测试包括逐条合入 Gemini 规则、规则优先顺序、常见 Gemini 域名匹配、AI 可选地区、全球策略保留、错误规则拒绝、来源失败保留旧文件、快照与 SHA 一致，以及离线重复生成。它们不模拟 Shadowrocket 的网络连接或故障切换。
+测试包括原 `.list` 单次引用与优先顺序、AI 可选地区、全球策略保留、错误规则拒绝、来源失败保留旧文件、来源记录一致，以及离线重复生成。它们不模拟 Shadowrocket 的网络连接或故障切换。
 
 ## 在 iPhone 使用
 

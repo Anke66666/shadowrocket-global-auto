@@ -6,7 +6,6 @@
     "source": "https://raw.githubusercontent.com/Anke66666/gemini-shadowrocket-rules/main/Gemini_2026_Shadowrocket.list",
     "sha256": "d214ffd731faa68bf53ca9d8b3b4eefe5d3d0e3db0445ba30861af87db43cf3d",
     "rule_count": 33,
-    "snapshot": "upstream/Gemini_2026_Shadowrocket.list",
     "policy": "AI"
   }
 }

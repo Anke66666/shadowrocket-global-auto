@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge Johnshall config and validated Gemini rules; retain selectable policies."""
+"""Build Johnshall config with a direct Gemini .list reference and selectable policies."""
 import argparse
 import hashlib
 import json
@@ -9,9 +9,7 @@ import urllib.request
 
 UPSTREAM = 'https://raw.githubusercontent.com/Johnshall/Shadowrocket-ADBlock-Rules-Forever/release/lazy_group.conf'
 GEMINI_UPSTREAM = 'https://raw.githubusercontent.com/Anke66666/gemini-shadowrocket-rules/main/Gemini_2026_Shadowrocket.list'
-GEMINI_SNAPSHOT = pathlib.Path(__file__).resolve().parents[1] / 'upstream' / 'Gemini_2026_Shadowrocket.list'
-GEMINI_BEGIN = '# BEGIN validated Gemini rules'
-GEMINI_END = '# END validated Gemini rules'
+GEMINI_RULE = 'RULE-SET,' + GEMINI_UPSTREAM + ',AI'
 GEMINI_REQUIRED = {
     'DOMAIN-SUFFIX,gemini.google.com',
     'DOMAIN-SUFFIX,aistudio.google.com',
@@ -103,10 +101,8 @@ def validate_source(doc):
         raise ConfigError('Upstream FINAL changed')
     return head, sections
 
-def build(source, gemini_source=None):
-    if gemini_source is None:
-        gemini_source = GEMINI_SNAPSHOT.read_text(encoding='utf-8')
-    enhanced_rules = gemini_rules(gemini_source)
+def build(source, gemini_source):
+    gemini_rules(gemini_source)
     _, sections = validate_source(source)
     original_groups = sections['Proxy Group']
     original_names = set(group_names(original_groups))
@@ -157,19 +153,16 @@ def build(source, gemini_source=None):
         elif policy.lower() in lookup:
             fields[p]=lookup[policy.lower()]
         updated_rules.append(','.join(fields))
-    # Inline the checked snapshot ahead of general Google/Microsoft/global rules.
-    # A later upstream edit cannot bypass validation on the phone via a live RULE-SET.
-    gemini_block = [GEMINI_BEGIN, '# Source: '+GEMINI_UPSTREAM,
-                    '# Shared Google endpoints in the source also follow AI.',
-                    *(rule+',AI' for rule in enhanced_rules), GEMINI_END]
-    sections['Rule']='\n'+'\n'.join(gemini_block+updated_rules)+'\n\n'
+    # Reference the original .list exactly like other remote rule sets.
+    # Keep it before general Google/Microsoft/global rules.
+    sections['Rule']='\n# Gemini enhanced rules\n'+GEMINI_RULE+'\n'+'\n'.join(updated_rules)+'\n\n'
     sha=hashlib.sha256(source.encode('utf-8')).hexdigest()
     gemini_sha=hashlib.sha256(gemini_source.encode('utf-8')).hexdigest()
     intro=(f'# Shadowrocket Global Auto | Upstream SHA256: {sha}\n'
            '# Source: https://github.com/Johnshall/Shadowrocket-ADBlock-Rules-Forever\n'
            '# CC BY-SA 4.0. Derived work. No private subscription or credentials.\n'
            f'# Gemini source: {GEMINI_UPSTREAM}\n'
-           f'# Gemini SHA256: {gemini_sha}\n'
+           f'# Gemini SHA256 at build: {gemini_sha}\n'
            '# AI is selectable like other services; choose a region in the client.\n'
            '# Latency measurement and failover timing depend on iOS/Shadowrocket.\n\n')
     output=intro+''.join(f'[{name}]'+text for name,text in sections.items())
@@ -192,23 +185,14 @@ def validate_output(doc):
     if not re.search('^'+re.escape(FAILOVER)+r'\s*=\s*fallback,',sections['Proxy Group'],re.M):
         raise ConfigError('Fallback missing')
     rule_text=sections['Rule']
-    if rule_text.count(GEMINI_BEGIN) != 1 or rule_text.count(GEMINI_END) != 1:
-        raise ConfigError('Missing or duplicate Gemini block')
-    before, block = rule_text.split(GEMINI_BEGIN, 1)
-    if any(line.strip() and not line.lstrip().startswith(('#', ';'))
-           for line in before.splitlines()):
-        raise ConfigError('Gemini block must precede upstream rules')
-    block, _ = block.split(GEMINI_END, 1)
-    normalized = []
-    for line in block.splitlines():
-        item = line.strip()
-        if not item or item.startswith(('#', ';')):
-            continue
-        fields = item.split(',')
-        if len(fields) != 3 or fields[-1] != 'AI':
-            raise ConfigError('Gemini rule must use AI policy')
-        normalized.append(','.join(fields[:2]))
-    gemini_rules('\n'.join(normalized))
+    active_rules = [line.strip() for line in rule_text.splitlines()
+                    if line.strip() and not line.lstrip().startswith(('#', ';'))]
+    references = [line for line in active_rules
+                  if line.startswith('RULE-SET,'+GEMINI_UPSTREAM+',')]
+    if references != [GEMINI_RULE]:
+        raise ConfigError('Exactly one original Gemini .list reference must use AI')
+    if active_rules[0] != GEMINI_RULE:
+        raise ConfigError('Gemini rule set must precede upstream rules')
     definitions = dict(line.split('=', 1) for line in sections['Proxy Group'].splitlines()
                        if line.strip() and not line.lstrip().startswith(('#', ';')))
     definitions = {name.strip(): value.strip() for name, value in definitions.items()}
@@ -258,7 +242,6 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--source',help='Optional local upstream file, for tests')
     ap.add_argument('--gemini-source',help='Optional local Gemini rules, for offline builds')
-    ap.add_argument('--gemini-snapshot',default=str(GEMINI_SNAPSHOT))
     ap.add_argument('--output',default='global-auto.conf')
     ap.add_argument('--lock',default='UPSTREAM.json')
     args=ap.parse_args()
@@ -276,13 +259,9 @@ def main():
             'source':GEMINI_UPSTREAM,
             'sha256':hashlib.sha256(gemini_source.encode('utf-8')).hexdigest(),
             'rule_count':len(gemini_rules(gemini_source)),
-            'snapshot':'upstream/Gemini_2026_Shadowrocket.list',
             'policy':'AI',
         },
     },ensure_ascii=False,indent=2)+'\n'
-    snapshot=pathlib.Path(args.gemini_snapshot)
-    snapshot.parent.mkdir(parents=True,exist_ok=True)
-    snapshot.write_text(gemini_source,encoding='utf-8',newline='\n')
     pathlib.Path(args.output).write_text(output,encoding='utf-8',newline='\n')
     pathlib.Path(args.lock).write_text(lock,encoding='utf-8',newline='\n')
     print('Output validated:',args.output,sha)
